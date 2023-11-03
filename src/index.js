@@ -15,12 +15,13 @@ module.exports = (options) => {
   const handleNewSocket = (socket) => {
     const connectionId = randomuuid();
     connections.set(connectionId, socket);    //id cua socket
-    emitter.emit('_connect', connectionId);
+    emitter.emit('receive_connection', connectionId);
 
     socket.on('close', () => {
       connections.delete(connectionId);
       emitter.emit('_disconnect', connectionId);
     });
+    var reqBuffer = Buffer.from('');
 
     // socket.pipe(splitStream()).on('data', (message) => {
     //   // console.log("hello");// gọi mỗi khi truyền message
@@ -28,10 +29,20 @@ module.exports = (options) => {
     //   emitter.emit('_message', { connectionId, message });
     // });
     socket.on('data', (data) => {
+      console.log("lmao");
+      console.log("Length of chunk: "+data.length);
+      console.log("String of chunk: "+data.toString());
+      reqBuffer=Buffer.concat([reqBuffer, data]);
+      const last3Bytes = reqBuffer.slice(-3);
+      console.log(last3Bytes.toString(),"----c[l");
       try {
-        console.log("lmao");
-        console.log(data.toString());
-        emitter.emit('_message', { connectionId, message: JSON.parse(data.toString()) });
+        if(last3Bytes.toString()==="end")
+        {
+          reqBuffer=reqBuffer.slice(0,-3)
+          console.log("im in");
+          emitter.emit('receive_message', { connectionId, message: JSON.parse(reqBuffer.toString()) });
+          reqBuffer = Buffer.from('');
+        }
       } catch (e) {
         // console.error(`Cannot parse message from peer`, data.toString())
       }
@@ -50,19 +61,19 @@ module.exports = (options) => {
       throw new Error(`Attempt to send data to connection that does not exist ${connectionId}`);
     }
     socket.write(JSON.stringify(message));
+    socket.write("end");
+
+    //ở đây phải stringtify vì socket.write chỉ cho phép tuyền đi string hoặc là instance của Buffer
+    //khi mà stringtify thì thằng  <Buffer 41 42 43> sẽ đưọc tự động structure thành object : { type: 'Buffer', data: [65,66,67] } (ma~ hex)
   };
 
   const connect = (ip, port, cb) => {
-    console.log(ip,port);
     const socket = new net.Socket();
 
     socket.connect(port, ip, () => {
       handleNewSocket(socket);
-      console.log("socket connect----");
-      // console.log(cb);
       cb && cb();
     });
-    console.log("what");
     // Return a disconnect function so you can
     // exclude the node from the list
     return (cb) => socket.destroy(cb);  // cais nayf lam cc j v
@@ -84,15 +95,12 @@ module.exports = (options) => {
     server.close(cb);
   };
 
-  //
-  // Layer 2 - create Nodes, assign IDs, handshake
-  // and keep neighbors in a collection
-  //
+
   const NODE_ID = randomuuid();
   console.log(NODE_ID);
   const neighbors = new Map();
 
-  // A helper to find node id by connection id
+
   const findNodeId = (connectionId) => {
     for (let [nodeId, $connectionId] of neighbors) {
       if (connectionId === $connectionId) {
@@ -101,21 +109,19 @@ module.exports = (options) => {
     }
   };
 
-  // Once connection is established, send the handshake message
-  emitter.on('_connect', (connectionId) => {
+
+  emitter.on('receive_connection', (connectionId) => {
     _send(connectionId, { type: 'handshake', data: { nodeId: NODE_ID } });
   });
 
-  // On message we check whether it's a handshake and add
-  // the node to the neighbors list
-  emitter.on('_message', ({ connectionId, message }) => {
+  emitter.on('receive_message', ({ connectionId, message }) => {
     const { type, data } = message;
-    console.log(type);
+    console.log(message,'-----------------');
     if (type === 'handshake') {
       const { nodeId } = data;
 
       neighbors.set(nodeId, connectionId);
-      emitter.emit('connect', { nodeId });
+      // emitter.emit('connect', { nodeId });
     }
 
     if (type === 'message') {
@@ -138,9 +144,7 @@ module.exports = (options) => {
 
 
   const send = (nodeId, data) => {
-    console.log("send---------");
     const connectionId = neighbors.get(nodeId);
-    console.log("he2");
     // TODO handle no connection id error
     if (data.type==='file')
     {
@@ -148,19 +152,17 @@ module.exports = (options) => {
       const fileName=data.message.fileName
       const address=path.join(process.cwd(), "repo", fileName);
       const fileData = fs.readFileSync(address)
-      console.log(address);
-      console.log(fileData);
       data.message.data=fileData
+      console.log(data);
+      console.log(JSON.stringify(data));
+
     }
     _send(connectionId, { type: 'message', data });
   };
 
 
-  const alreadySeenMessages = new Set();
 
   const sendPacket = (packet) => {
-    console.log("sendPacket---------");
-    console.log(neighbors.keys());
     for (const $nodeId of neighbors.keys()) {
       send($nodeId, packet);      // lấy connection id của mình dùng để kết nối với node của người ta
     }
@@ -178,36 +180,24 @@ module.exports = (options) => {
     sendPacket({ id, ttl, type: 'direct', message, destination, origin });
   };
 
-
   emitter.on('direct',(packet)=>{
     const address=path.join(process.cwd(),"downloads",packet.message.fileName)
-    console.log(address);
+    // console.log(address);
+    console.log("DIRECT--------");
     console.log(packet);
+    console.log(packet.message.data.data);
     const content= Buffer.from(packet.message.data);
     console.log(content);
     fs.writeFileSync(address,content)
   })
   emitter.on('message', ({ nodeId, data: packet }) => {
-    
-    console.log(packet);
-    // if (alreadySeenMessages.has(packet.id) || packet.ttl < 1) {
-    //   return;
-    // } else {
-    //   alreadySeenMessages.add(packet.id);
-    // }
-
     if (packet.type === 'broadcast') {
-      emitter.emit('broadcast', { message: packet.message, origin: packet.origin });
-      broadcast(packet.message, packet.id, packet.origin, packet.ttl - 1);
+      // emitter.emit('broadcast', { message: packet.message, origin: packet.origin });
+      // broadcast(packet.message, packet.id, packet.origin, packet.ttl - 1);
+      // console.log(packet.message);
+      console.log(packet.message.name + ": " + packet.message.text);
     }
 
-    if (packet.type === 'direct') {
-      if (packet.destination === NODE_ID) {
-        emitter.emit('direct', { origin: packet.origin, message: packet.message });
-      } else {
-        direct(packet.destination, packet.message, packet.id, packet.origin, packet.ttl - 1);
-      }
-    }
     if (packet.type === 'file') {
       console.log("i am here");
         emitter.emit('direct', { origin: packet.origin, message: packet.message });
