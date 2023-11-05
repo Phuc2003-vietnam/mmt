@@ -29,7 +29,6 @@ console.log('Peer 2 listening on port 8881.');
 
 server2.on('connection', function (conn) {
     console.log('Peer 2 connected.');
-
         conn.pipe(out)
             .on('finish', function () {
                 console.log('File received and saved');
